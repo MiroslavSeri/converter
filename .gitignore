@@ -1,4 +1,18 @@
-venv/
+# Python cache
 __pycache__/
 *.pyc
-*.exe
+
+# Virtual env
+venv/
+
+# VSCode nastavení kromě launch.json
+.vscode/*
+!.vscode/launch.json
+
+# Dočasné nebo výstupní soubory
+input/*.mp4
+output/*.mp4
+
+# Stažené binárky
+ffmpeg.exe
+mediainfo.exe
