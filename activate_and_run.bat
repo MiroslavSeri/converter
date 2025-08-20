@@ -30,10 +30,5 @@ if exist "requirements.txt" (
     echo [!] requirements.txt not found – skipping.
 )
 
-REM 5) Spust hlavní skript z venv
-echo [*] Running AnyToH265Converter.py...
-python "AnyToH265Converter.py"
-set EXITCODE=%ERRORLEVEL%
-
 endlocal
 exit /b %EXITCODE%
