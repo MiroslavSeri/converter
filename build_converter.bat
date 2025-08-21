@@ -1,30 +1,24 @@
 @echo off
 setlocal
+set OUTDIR=dist\BatchConverter
 
-REM ===== 1. Aktivace virtuálního prostředí =====
-if not exist "venv\Scripts\activate.bat" (
-    echo [*] Vytvářím venv...
-    python -m venv venv
-)
-call venv\Scripts\activate.bat
+echo === Mazu stare build/dist ===
+rmdir /s /q build  2>nul
+rmdir /s /q dist   2>nul
 
-REM ===== 2. Instalace PyInstalleru =====
-pip show pyinstaller >nul 2>&1
-if errorlevel 1 (
-    echo [*] Instalace PyInstaller...
-    python -m pip install pyinstaller
-)
+echo === Build (ONEDIR, podle .spec) ===
+pyinstaller --clean --noconfirm BatchConverter.spec || goto :err
 
-REM ===== 3. Build EXE =====
-echo [*] Spouštím build...
-pyinstaller --onefile ^
-    --name converter ^
-    --add-binary "ffmpeg.exe;." ^
-    --add-binary "mediainfo.exe;." ^
-    BatchConverter.py
+echo === Kopiruju ffmpeg.exe a mediainfo.exe vedle EXE ===
+if exist ffmpeg.exe     copy /y ffmpeg.exe     "%OUTDIR%" >nul
+if exist mediainfo.exe  copy /y mediainfo.exe  "%OUTDIR%" >nul
 
-REM ===== 4. Výsledek =====
-echo.
-echo [✅] Hotovo! Spustitelný soubor najdeš v dist\converter.exe
+echo === Hotovo ===
+echo %OUTDIR%\BatchConverter.exe
+dir "%OUTDIR%" | findstr /i /c:"ffmpeg.exe" /c:"mediainfo.exe"
 pause
-endlocal
+goto :eof
+
+:err
+echo BUILD SELHAL
+pause

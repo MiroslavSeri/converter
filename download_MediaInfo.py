@@ -1,71 +1,42 @@
-# download_mediainfo.py
-import os
-import zipfile
-import tempfile
-import shutil
-import urllib.request
-from pathlib import Path
+# download_MediaInfo.py
+import os, sys, urllib.request, zipfile, tempfile, shutil
 
-# URL to download MediaInfo (Windows CLI version)
-MEDIAINFO_URL = "https://mediaarea.net/download/binary/mediainfo/23.07/MediaInfo_CLI_23.07_Windows_x64.zip"
+MEDIAINFO_ZIP_URL = "https://mediaarea.net/download/binary/libmediainfo0/25.07/MediaInfo_DLL_25.07_Windows_x64_WithoutInstaller.zip"
 
-# Root directory (the folder where this script is located)
-ROOT = Path(__file__).resolve().parent
+def _base_dir():
+    return os.path.dirname(sys.executable) if getattr(sys, "frozen", False) \
+           else os.path.dirname(os.path.abspath(__file__))
 
-# The name of the executable we are looking for
-MEDIAINFO_EXE_NAME = "mediainfo.exe"
+LOCAL_DIR = _base_dir()  # ← ukládej vedle EXE/PY
+LOCAL_DLL = os.path.join(LOCAL_DIR, "MediaInfo.dll")
 
-# Full local path where mediainfo.exe will be saved
-LOCAL_MEDIAINFO_PATH = ROOT / MEDIAINFO_EXE_NAME
-
+def show_download_progress(block_num, block_size, total_size):
+    downloaded = block_num * block_size
+    percent = int(downloaded * 100 / total_size) if total_size > 0 else 0
+    sys.stdout.write(f"\r📦 Stahuji MediaInfo… {percent}%")
+    sys.stdout.flush()
 
 def download_and_extract_mediainfo():
-    """
-    Downloads and extracts MediaInfo CLI from the official ZIP archive.
-    If the executable already exists locally, the function does nothing.
-    Returns the path to the mediainfo.exe file.
-    """
-    # If mediainfo.exe already exists, no need to download again
-    if LOCAL_MEDIAINFO_PATH.exists():
-        print(f"✅ {MEDIAINFO_EXE_NAME} already exists.")
-        return LOCAL_MEDIAINFO_PATH
+    if os.path.exists(LOCAL_DLL):
+        print("✅ MediaInfo.dll už existuje.")
+        return
 
-    # Create a temporary folder for download and extraction
+    print(f"⬇️ Stahuji MediaInfo z: {MEDIAINFO_ZIP_URL}")
     with tempfile.TemporaryDirectory() as tmpdir:
-        zip_path = Path(tmpdir) / "mediainfo.zip"
+        zip_path = os.path.join(tmpdir, "mediainfo.zip")
+        urllib.request.urlretrieve(MEDIAINFO_ZIP_URL, zip_path, reporthook=show_download_progress)
+        print("\n📦 Rozbaluji…")
 
-        # Download the ZIP file
-        print(f"⬇️ Downloading from: {MEDIAINFO_URL}")
-        urllib.request.urlretrieve(MEDIAINFO_URL, zip_path)
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            names = zf.namelist()
+            dll_member = next((n for n in names if n.endswith("MediaInfo.dll")), None)
+            if not dll_member:
+                raise RuntimeError("❌ V archivu jsem nenašel MediaInfo.dll")
 
-        # Open the ZIP archive and search for mediainfo.exe
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            for file in zip_ref.namelist():
-                # Match exactly "mediainfo.exe" regardless of folder inside the archive
-                if os.path.basename(file).lower() == MEDIAINFO_EXE_NAME:
-                    # Extract mediainfo.exe into the temporary folder
-                    zip_ref.extract(file, tmpdir)
+            src = zf.extract(dll_member, tmpdir)
+            shutil.copy2(src, LOCAL_DLL)
 
-                    # Copy it into the project root
-                    shutil.copy(Path(tmpdir) / file, LOCAL_MEDIAINFO_PATH)
-                    print(f"✅ {MEDIAINFO_EXE_NAME} saved to: {LOCAL_MEDIAINFO_PATH}")
-                    return LOCAL_MEDIAINFO_PATH
-
-    # If mediainfo.exe was not found in the archive, raise an error
-    raise RuntimeError(f"❌ {MEDIAINFO_EXE_NAME} not found in the archive!")
-
-
-def get_mediainfo_path():
-    """
-    Returns the path to mediainfo.exe.
-    Downloads and extracts it first if it doesn’t exist locally.
-    """
-    if not LOCAL_MEDIAINFO_PATH.exists():
-        return download_and_extract_mediainfo()
-    return LOCAL_MEDIAINFO_PATH
-
+        print(f"✅ Uloženo: {LOCAL_DLL}")
 
 if __name__ == "__main__":
-    # Run the download and extraction when script is executed directly
-    path = download_and_extract_mediainfo()
-    print(f"Use this executable: {path}")
+    download_and_extract_mediainfo()

@@ -5,14 +5,21 @@ __pycache__/
 # Virtual env
 venv/
 
-# VSCode nastavení kromě launch.json
+# VS Code – všechno kromě launch.json
 .vscode/*
 !.vscode/launch.json
 
-# Dočasné nebo výstupní soubory
+# Build artefakty
+/build/
+
+# Dočasné / výstupní soubory
 input/*.mp4
 output/*.mp4
 
-# Stažené binárky
+# PyInstaller spec soubory
+*.spec
+
+# Stažené binárky a knihovny
 ffmpeg.exe
 mediainfo.exe
+MediaInfo.dll
