@@ -23,3 +23,6 @@ output/*.mp4
 ffmpeg.exe
 mediainfo.exe
 MediaInfo.dll
+
+/dist/*
+!/dist/AnyToH265Converter.exe

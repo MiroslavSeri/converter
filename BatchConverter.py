@@ -1,41 +1,49 @@
-import os
-import sys
-import time
-import threading
-import multiprocessing
+# BatchConverter.py
+import os, sys, time, threading, multiprocessing
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from multiprocessing import Manager
 
-from AnyToH265Converter import AnyToH265Converter
 from download_ffmpeg import download_and_extract_ffmpeg
 from download_MediaInfo import download_and_extract_mediainfo
 
+def _enable_vt_output():
+    # Povolit ANSI/VT v klasickém cmd/PowerShell
+    if os.name == "nt":
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            STD_OUTPUT_HANDLE = -11
+            h = kernel32.GetStdHandle(STD_OUTPUT_HANDLE)
+            mode = ctypes.c_uint()
+            if kernel32.GetConsoleMode(h, ctypes.byref(mode)):
+                ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
+                kernel32.SetConsoleMode(h, mode.value | ENABLE_VIRTUAL_TERMINAL_PROCESSING)
+        except Exception:
+            pass
 
-# --- stabilní worker pro ProcessPool (top-level funkce) ---
+def _base_dir():
+    return os.path.dirname(sys.executable) if getattr(sys, "frozen", False) \
+           else os.path.dirname(os.path.abspath(__file__))
+
+# --- top-level worker, kvůli Windows + PyInstaller ---
 def convert_one_file(file_path, progress_dict):
     try:
+        from AnyToH265Converter import AnyToH265Converter
         conv = AnyToH265Converter(
             file_path,
-            print_lock=None,
             progress_dict=progress_dict,
-            show_progress=False,   # worker nic netiskne; progress jde přes dict
+            show_progress=False  # worker netiskne do konzole
         )
         ok = conv.convert()
         return (file_path, ok, None)
     except Exception as e:
         return (file_path, False, str(e))
 
-
 class BatchConverter:
     def __init__(self, input_dir="input", reserve_cores=2):
-        # vstupní složka
-        self.input_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), input_dir)
-
-        # kolik jader použít
+        self.input_dir = os.path.join(_base_dir(), input_dir)
         total_cores = multiprocessing.cpu_count()
         self.max_workers = max(1, total_cores - reserve_cores)
-
-        # podporované přípony
         self.supported_ext = (".mp4", ".avi", ".mkv", ".mov", ".flv", ".mpeg")
 
     def _get_video_files(self):
@@ -48,70 +56,66 @@ class BatchConverter:
         ]
 
     def _ensure_tools(self):
-        # stáhni jednou dopředu, ať workery hned jedou
+        # stáhni binárky jednou dopředu (vedle .exe / .py)
         download_and_extract_ffmpeg()
         download_and_extract_mediainfo()
 
     def convert_all(self):
-        video_files = self._get_video_files()
-        if not video_files:
+        files = self._get_video_files()
+        if not files:
             print("❌ No supported video files found in the folder.")
             return
 
-        # zajisti binárky před startem poolu
+        # zajisti ffmpeg + MediaInfo před startem workerů
         self._ensure_tools()
 
-        print(f"🔁 Found {len(video_files)} videos. Starting conversion with {self.max_workers} processes...\n")
+        print(f"🔁 Found {len(files)} videos. Starting conversion with {self.max_workers} processes...\n")
 
         with Manager() as manager:
-            progress_dict = manager.dict()  # sdílený slovník: {basename: "⏳ xx.x%"/"✅ Done"/"❌ Error"}
+            progress_dict = manager.dict()
 
-            # vytvoř pool s explicitním 'spawn' (Windows-friendly)
             ctx = multiprocessing.get_context("spawn")
             with ProcessPoolExecutor(max_workers=self.max_workers, mp_context=ctx) as executor:
-                futures = {
-                    executor.submit(convert_one_file, path, progress_dict): path
-                    for path in video_files
-                }
+                futures = {executor.submit(convert_one_file, p, progress_dict): p for p in files}
 
-                # --- vlákno, které průběžně tiskne tabulku progresu ---
-                stop_flag = manager.Value('b', False)
-
-                def print_loop():
-                    last_count = 0
-                    while not stop_flag.value:
-                        items = sorted(progress_dict.items())  # [(basename, status), ...]
+                stop = False
+                def printer():
+                    last = 0
+                    while not stop:
                         lines = ["📊 Conversion in progress:\n"]
-                        for name, status in items:
-                            lines.append(f"  {name:<40} {status}")
-                        output = "\n".join(lines) + "\n"
-
-                        # přepiš předchozí blok
-                        if last_count > 0:
-                            sys.stdout.write("\033[F" * last_count)
-                        sys.stdout.write(output)
+                        for k, v in sorted(progress_dict.items()):
+                            lines.append(f"  {k:<40} {v}")
+                        out = "\n".join(lines) + "\n"
+                        if last:
+                            try:
+                                sys.stdout.write("\033[F" * last)
+                            except Exception:
+                                pass
+                        sys.stdout.write(out)
                         sys.stdout.flush()
-                        last_count = len(lines) + 1
+                        last = len(lines) + 1
+                        if all(f.done() for f in futures):
+                            break
                         time.sleep(0.5)
 
-                display_thread = threading.Thread(target=print_loop, daemon=True)
-                display_thread.start()
+                t = threading.Thread(target=printer, daemon=True)
+                t.start()
 
-                # čekej na dokončení jednotlivých úloh
                 for fut in as_completed(futures):
-                    file_path, ok, err = fut.result()
-                    key = os.path.basename(file_path)
-                    progress_dict[key] = "✅ Done" if ok else f"❌ Error: {err or ''}"
+                    fp, ok, err = fut.result()
+                    progress_dict[os.path.basename(fp)] = "✅ Done" if ok else f"❌ Error: {err or ''}"
 
-                # ukonči tisk a dočisti
-                stop_flag.value = True
-                display_thread.join()
+                stop = True
+                t.join()
+
+        # finální snapshot
+        print("\n📊 Final status:")
+        for k, v in sorted(progress_dict.items()):
+            print(f"  {k:<40} {v}")
 
         print("\n🎉 All conversions finished.")
 
-
 if __name__ == "__main__":
-    multiprocessing.freeze_support()  # bezpečné i v terminálu
-    reserve_cores = 2
-    batch = BatchConverter(input_dir="input", reserve_cores=reserve_cores)
-    batch.convert_all()
+    _enable_vt_output()
+    multiprocessing.freeze_support()   # důležité pro Windows/EXE
+    BatchConverter(input_dir="input", reserve_cores=2).convert_all()
