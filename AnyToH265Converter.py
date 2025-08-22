@@ -12,20 +12,31 @@ def _base_dir() -> str:
            else os.path.dirname(os.path.abspath(__file__))
 
 def _find_tool(name: str) -> str | None:
+    """Najdi nástroj vedle EXE/skriptu, v _internal, a nově i v _MEIPASS (onefile)."""
     b = _base_dir()
-    cand = os.path.join(b, name)
-    if os.path.isfile(cand):
-        return cand
-    cand2 = os.path.join(b, "_internal", name)
-    if os.path.isfile(cand2):
-        return cand2
+    meipass = getattr(sys, "_MEIPASS", None)
+    for p in (
+        os.path.join(b, name),
+        os.path.join(b, "_internal", name),
+        os.path.join(meipass, name) if meipass else "",
+        os.path.join(meipass, "_internal", name) if meipass else "",
+    ):
+        if p and os.path.isfile(p):
+            return p
     from shutil import which
     return which(name)
 
 def _mediainfo_dll() -> str | None:
-    for p in (os.path.join(_base_dir(), "MediaInfo.dll"),
-              os.path.join(_base_dir(), "_internal", "MediaInfo.dll")):
-        if os.path.isfile(p):
+    """Najdi MediaInfo.dll vedle EXE/skriptu, v _internal, a nově i v _MEIPASS (onefile)."""
+    b = _base_dir()
+    meipass = getattr(sys, "_MEIPASS", None)
+    for p in (
+        os.path.join(b, "MediaInfo.dll"),
+        os.path.join(b, "_internal", "MediaInfo.dll"),
+        os.path.join(meipass, "MediaInfo.dll") if meipass else "",
+        os.path.join(meipass, "_internal", "MediaInfo.dll") if meipass else "",
+    ):
+        if p and os.path.isfile(p):
             return p
     return None
 
@@ -50,6 +61,7 @@ class AnyToH265Converter:
         self.show_progress = show_progress
         self._last_percent_shown = -1.0
         self._progress_key = os.path.basename(self.input_path)
+        self.last_error = ""   # sem ukládáme text poslední chyby z ffmpeg
 
     def _build_output_path(self):
         base_name = os.path.splitext(os.path.basename(self.input_path))[0]
@@ -75,18 +87,15 @@ class AnyToH265Converter:
             return
         if self.print_lock is not None:
             with self.print_lock:
-                sys.stdout.write(msg)
-                sys.stdout.flush()
+                sys.stdout.write(msg); sys.stdout.flush()
         else:
-            sys.stdout.write(msg)
-            sys.stdout.flush()
+            sys.stdout.write(msg); sys.stdout.flush()
 
     def convert(self):
         if os.path.exists(self.output_path) and not self.overwrite:
             self._print(f"⚠️  Přeskočeno: {os.path.basename(self.output_path)}\n")
             return False
 
-        # inicializace sdíleného progressu
         if self.progress_dict is not None:
             self.progress_dict[self._progress_key] = "⏳ 0.0%"
 
@@ -109,33 +118,38 @@ class AnyToH265Converter:
             cwd=_base_dir()
         )
         time_pattern = re.compile(r"time=(\d+):(\d+):(\d+\.\d+)")
+        last_stderr = ""  # budeme si pamatovat poslední „neprogresový“ řádek z ffmpeg
 
         if process.stderr:
             for line in process.stderr:
+                line_stripped = line.strip()
                 match = time_pattern.search(line)
                 if match and self.duration:
                     h, m, s = match.groups()
                     current_time = int(h) * 3600 + int(m) * 60 + float(s)
                     percent = max(0.0, min(100.0, (current_time / self.duration) * 100.0))
 
-                    # update shared progress for batch UI
                     if self.progress_dict is not None:
                         self.progress_dict[self._progress_key] = f"⏳ {percent:.1f}%"
 
-                    # optional local console progress
                     if percent - self._last_percent_shown >= 0.5:
                         self._print(f"\r⏳ {percent:.1f}%")
                         self._last_percent_shown = percent
+                else:
+                    # ulož poslední relevantní hlášku (využijeme, když ffmpeg skončí chybou)
+                    if line_stripped:
+                        last_stderr = line_stripped
 
         process.wait()
         ok = (process.returncode == 0)
 
-        # finální status do sdíleného slovníku
-        if self.progress_dict is not None:
-            self.progress_dict[self._progress_key] = "✅ Done" if ok else "❌ Error"
+        if not ok:
+            self.last_error = last_stderr or "ffmpeg failed"
 
-        # volitelný výstup do konzole
-        self._print("\n✅ Hotovo\n" if ok else "\n❌ Chyba\n")
+        if self.progress_dict is not None:
+            self.progress_dict[self._progress_key] = "✅ Done" if ok else f"❌ Error: {self.last_error}"
+
+        self._print("\n✅ Hotovo\n" if ok else f"\n❌ Chyba: {self.last_error}\n")
         return ok
 
 

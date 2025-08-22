@@ -26,3 +26,5 @@ MediaInfo.dll
 
 /dist/*
 !/dist/BatchConverter.exe
+!/dist/VideoAnalyzer.exe
+
