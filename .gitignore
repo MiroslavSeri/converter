@@ -25,4 +25,4 @@ mediainfo.exe
 MediaInfo.dll
 
 /dist/*
-!/dist/AnyToH265Converter.exe
+!/dist/BatchConverter.exe
